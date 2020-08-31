@@ -13,6 +13,85 @@ import  xml.etree.ElementTree as ET
 
 
 logsfilepath="/Users/mafang/Desktop/SmartCourt/Searchlog"
+click_log_file_path_SAT_Click="/Users/mafang/Desktop/SmartCourt/Click/SAT-Click"
+click_log_file_path_Click_Search="/Users/mafang/Desktop/SmartCourt/Click/Click_Search"
+
+
+def parse_sessions_from_click_log(click_log_file_path):
+            users_search_logs = {}
+            user_files = os.listdir(click_log_file_path)
+            user_id = ""
+            sessions = []  # a user's all log session
+            for file in user_files:  # 遍历每个用户的日志文件
+                if not os.path.isdir(file):  # 此时不是文件夹才打开
+                    userid = file[0:37]
+                    user_id = userid
+                    f = open(click_log_file_path + "/" + file, 'rb')  # ,encoding='utf-8'
+                    lines = f.readlines()
+                    str = ""
+                    for line in lines:
+                        line = line.decode("utf8", "ignore")
+                        str = str + line
+                    f.close()
+                    matchstr = r"(\d\d\d\d)-(\d\d)-(\d\d) (\d\d):(\d\d):(\d\d)  --  (案例研判检索分析|案例研判组合检索|查看案件详情)  --(.*)"
+                    matcheds = re.findall(matchstr, str)
+
+                    for per in matcheds:
+                        # print(per)
+                        date_time = per[0] + "-" + per[1] + "-" + per[2] + " " + per[3] + ":" + per[4] + ":" + per[5]
+                        kind = per[6]
+                        key_str = ""
+                        case_type = ""
+                        view_id = ""
+                        view_folder = ""
+                        location_list = ""
+                        ids = []
+                        if kind == "查看案件详情":
+                            view_id = None
+                            splits = per[7]
+                            splits = re.split("  --   所在列表位置 : ", splits)
+                            url = splits[0].strip()
+                            urls = re.split("/", url)
+                            case_type = urls[1]
+                            if case_type == "case" or case_type == "alcase":
+                                view_id = urls[2]
+                            else:  # casews
+                                view_folder = urls[2]
+                                view_id = urls[3]
+                            location_list = re.split("\\r", splits[1])[0]
+
+                        elif kind == "案例研判检索分析":
+                            keystr = "" + per[7]
+                            result_nul = keystr.find("结果  : []")
+                            if result_nul == -1:
+                                keystr = re.split("结果  : \[{\"resultIds\":\[\"", keystr)[1]
+                                ids = re.split("\"\],\"searchType\":", keystr)[0]
+                                ids = re.split("\",\"", ids)
+                                key_str = re.split(",\"cfield\":\"", per[7])[1]
+                                key_str = re.split("\",\"value\":\"", key_str)[0]
+                            else:
+                                ids = []
+                        else:  # 案例研判组合检索
+                            morekeystr = "" + per[7]
+                            result_nul = morekeystr.find("结果  : \[\]")
+                            if result_nul != -1:
+                                keystrs = re.split("结果  : \[{\"resultIds\":\[\"", morekeystr)[1]
+                                ids = re.split("\],\"searchType\":\"QWAL\"\},\{\"resultIds\":\[", keystrs)
+                                ids1 = ids[0]
+                                ids2 = ids[1]
+                                ids2 = re.split("\"\],\"searchType\":", ids2)[0]
+                                ids1 = re.split("\",\"", ids1)
+                                ids2 = re.split("\",\"", ids2)
+                                ids = ids1 + ids2
+                                key_str = re.split(",\"cfield\":\"", morekeystr)[1]
+                                key_str = re.split("\",\"value\":\"", morekeystr)
+                        se = session(user_id=userid, date=date_time, kind=kind, keystr=key_str, case_type=case_type,
+                                     view_id=view_id, view_folder=view_folder, location_list=location_list,
+                                     result_ids=ids,
+                                     contexts=None)
+                        sessions.append(se)
+                    users_search_logs[user_id]=sessions
+            return users_search_logs
 
 
 
@@ -99,7 +178,8 @@ def parse_sessions_from_log(logfilepath):
 
 
 #进行中文分词 输入一篇文章
-def ChineseSentenceSplit(string): #return [n]  n 为一句评论中分词个数
+def chineseSentenceSplit(string): #return [n]  n 为一句评论中分词个数
+    #print(string)
     data = clean_str(string)
     seg_list = jieba.cut(data)  # 默认是精确模式
     tokens = [t for t in seg_list if len(t) > 1]  # 剔除单字
@@ -130,8 +210,8 @@ def clean_str(string):
     return string.strip()
 
 
-def get_documents_from_sessions():
-    users_sessions = parse_sessions_from_log(logsfilepath)
+def get_documents_from_sessions(save_name,logsfilepath):
+    users_sessions = parse_sessions_from_click_log(logsfilepath)
     dict_sessions={}
     for key in users_sessions.keys():
         click_documents_ids = []
@@ -160,7 +240,7 @@ def get_documents_from_sessions():
             new_user_sessions.append(se.__dict__)
         dict_sessions[key]=new_user_sessions
     jss=json.dumps(dict_sessions,ensure_ascii=False)
-    json_sessions=open('five_user_log_sessions.json','w')
+    json_sessions=open(save_name,'w')
     json_sessions.write(jss)
     json_sessions.close()
     print("OK")
@@ -169,6 +249,7 @@ def get_documents_from_sessions():
     return
 
 documents_path="/Users/mafang/Desktop/SmartCourt/original_text/original text"
+
 def get_documents_from_folder_id(folder_id=None,search=1,text_id=None,ids=[]):
     """
     :param folder_id:  案例文件夹id
@@ -228,18 +309,40 @@ def get_documents_from_folder_id(folder_id=None,search=1,text_id=None,ids=[]):
                                     print(doc," Got it!")
     return documents
 
+json_path="five_user_log_sessions.json"
+
+
+
+
+def read_json_data(json_path):
+    users_sessions_data={}
+    with open(json_path,'r',encoding="utf-8") as f:
+        js_data=json.load(f)
+        for user_id in js_data:
+            user_data=js_data[user_id]
+            sessions=[]
+            for se in user_data:
+                user_session=session()
+                user_session.__dict__=se
+                sessions.append(user_session)
+            users_sessions_data[user_id]=sessions
+    f.close()
+    return users_sessions_data
+
 
 if __name__=="__main__":
+   # get_documents_from_sessions("SAT_Click.json",click_log_file_path_SAT_Click)
+    get_documents_from_sessions("Click_Search.json",click_log_file_path_Click_Search)
     #get_documents_from_sessions()
     # users_sessions=parse_sessions_from_log(logsfilepath)
     # print(users_sessions["0808_58D7A68C84497105161B73E8FD955D60"][0].keystr)
-    with open("five_user_log_sessions.json",'r') as f:
-        js=json.loads(f.read())
-        users_sessions=json.loads(js)
+    # with open("five_user_log_sessions.json",'r') as f:
+    #     js=json.loads(f.read())
+    #     users_sessions=json.loads(js)
+    #
+    #     print(users_sessions)
 
-        print(users_sessions)
-
-
+    #read_json_data(json_path)
 
 
 
